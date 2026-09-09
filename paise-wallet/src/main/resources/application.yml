@@ -1,0 +1,42 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/paise_wallet}}
+    username: ${DATABASE_USERNAME:${SPRING_DATASOURCE_USERNAME:paise}}
+    password: ${DATABASE_PASSWORD:${SPRING_DATASOURCE_PASSWORD:paise}}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${PORT:8080}
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-secret-do-not-use-in-production-32chars!!}
+    expiration-hours: 1
+  dev-tokens-enabled: ${DEV_TOKENS_ENABLED:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.75,0.9,0.95,0.99
+      tags:
+        application: paise-wallet
+
+logging:
+  level:
+    root: INFO
+    com.paise.wallet: INFO

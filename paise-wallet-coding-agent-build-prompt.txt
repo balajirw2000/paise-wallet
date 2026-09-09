@@ -1,0 +1,809 @@
+BUILD PROMPT — paise-wallet
+
+Wallet / P2P Transfer Service — Phased Coding Agent Specification
+
+1. ROLE
+
+You are a Senior Backend Engineer responsible for building a production-quality wallet / P2P transfer service from scratch.
+
+The primary goal is correctness under concurrency and retries, not feature breadth.
+
+Never lose money.
+
+Never create money.
+
+Never double-move money.
+
+Never allow one user to spend another user's money.
+
+Never create duplicate wallets under concurrent requests.
+
+Never return incorrect results during concurrent retries.
+
+Deliver a fully runnable, tested, containerized, observable, and deployable service.
+
+2. HOW YOU SHOULD WORK
+
+Build the project in phases
+
+Do not attempt to build the entire project in one response or one giant operation.
+
+First inspect the current repository/workspace and understand what already exists. Then create and maintain a project task plan grouped into logical phases.
+
+PHASE 0 — Project inspection & planning
+PHASE 1 — Project bootstrap & configuration
+PHASE 2 — Database schema & migrations
+PHASE 3 — Domain models, DTOs & exceptions
+PHASE 4 — Repository/data-access layer
+PHASE 5 — Transfer transaction & concurrency correctness
+PHASE 6 — Authentication & authorization
+PHASE 7 — REST controllers
+PHASE 8 — Error handling & request correlation
+PHASE 9 — Metrics & structured logging
+PHASE 10 — Docker & local infrastructure
+PHASE 11 — Automated tests
+PHASE 12 — Concurrency/burst testing
+PHASE 13 — Documentation & write-up
+PHASE 14 — Final verification
+
+For every phase:
+
+Identify the tasks belonging to the phase.
+
+Implement them directly in the repository/workspace.
+
+Run the relevant tests/build checks.
+
+Inspect the result for correctness.
+
+Fix issues discovered.
+
+Mark verified tasks as complete.
+
+Only then move to the next phase.
+
+Maintain a visible checklist throughout development, for example:
+
+[ ] Phase 1 — Project bootstrap
+    [ ] pom.xml
+    [ ] application.yml
+    [ ] environment configuration
+    [ ] application starts successfully
+
+[ ] Phase 2 — Database
+    [ ] Flyway migration
+    [ ] wallet constraints
+    [ ] transfer constraints
+    [ ] indexes
+
+Clarifying questions
+
+You may ask clarifying questions when genuinely necessary.
+
+Do not ask questions whose answers can be determined from this specification.
+
+Do not stop the entire project because of a minor ambiguity.
+
+If a reasonable implementation decision can be made from the requirements, make the decision and document it.
+
+If a decision could materially affect correctness, security, data integrity, or evaluation criteria, ask before proceeding.
+
+When asking a question, clearly explain what decision is blocked by it.
+
+3. DEVELOPMENT PRINCIPLES
+
+Prioritize requirements in this order:
+
+Money correctness
+
+Concurrency correctness
+
+Idempotency
+
+Authorization/security
+
+Database consistency
+
+Testability
+
+Observability
+
+Deployability
+
+Code quality
+
+Convenience/features
+
+Prefer simple, explicit solutions over abstractions that make correctness harder to reason about. Keep the API surface intentionally small. Do not add unnecessary features.
+
+4. FIXED TECH STACK
+
+Java 21
+
+Spring Boot 3
+
+Spring Web
+
+Spring Validation
+
+Spring Actuator
+
+PostgreSQL
+
+Spring JDBC / JdbcTemplate
+
+Do NOT use JPA/Hibernate
+
+Flyway migrations
+
+JWT HS256
+
+io.jsonwebtoken:jjwt
+
+Micrometer
+
+Prometheus
+
+Logback JSON
+
+net.logstash.logback
+
+JUnit 5
+
+Testcontainers with PostgreSQL
+
+Maven
+
+Use explicit SQL wherever database locking and concurrency behavior matter.
+
+5. CORE BUSINESS REQUIREMENT
+
+Users have wallets containing integer paise. Users can transfer money to each other.
+
+Conservation: Money cannot be lost or created during transfers.
+
+Idempotency: A retry using the same idempotency key must return the original result without moving money again. Same idempotency key + different request body must return 409.
+
+Race-free wallet creation: Concurrent first-time transfers involving new users must create each wallet exactly once, with no duplicate wallet rows and no race-condition-induced 500.
+
+Authorization: A caller can only spend from their own wallet and read transfers in which they are a participant. Caller identity must come exclusively from the verified JWT.
+
+6. MONEY REPRESENTATION
+
+Money must be represented as integer paise using BIGINT / Java long.
+
+Never use float.
+
+Never use double.
+
+Never use floating-point arithmetic for balances.
+
+Database constraints must enforce balance_paise >= 0 and amount_paise > 0.
+
+7. DATABASE SCHEMA
+
+CREATE TABLE wallets (
+    user_id TEXT PRIMARY KEY,
+    balance_paise BIGINT NOT NULL DEFAULT 0 CHECK (balance_paise >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE transfers (
+    transfer_id UUID PRIMARY KEY,
+    from_user TEXT NOT NULL REFERENCES wallets(user_id),
+    to_user TEXT NOT NULL REFERENCES wallets(user_id),
+    amount_paise BIGINT NOT NULL CHECK (amount_paise > 0),
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'APPLIED',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_idem UNIQUE (from_user, idempotency_key)
+);
+
+CREATE INDEX idx_transfers_to_user
+ON transfers(to_user);
+
+Use Flyway for schema creation.
+
+8. API
+
+* /dev/token must only exist when DEV_TOKENS_ENABLED=true.
+
+9. TRANSFER VALIDATION
+
+to_user must not equal caller.
+
+amount_paise must be greater than 0.
+
+idempotency_key must be non-blank.
+
+request_hash = SHA-256(to_user + ":" + amount_paise).
+
+Caller identity must come from the verified JWT sub.
+
+10. TRANSFER TRANSACTION — CRITICAL
+
+All transfer logic must happen inside one PostgreSQL transaction using READ COMMITTED.
+
+1. Validate request: to_user != caller; amount_paise > 0; idempotency_key is non-blank.
+
+2. Calculate request hash: SHA-256(to_user + ":" + amount_paise).
+
+3. Begin transaction: Use one database transaction with READ COMMITTED.
+
+4. Get/create wallets: INSERT INTO wallets(user_id) VALUES (?) ON CONFLICT (user_id) DO NOTHING. Never SELECT then INSERT.
+
+5. Lock both wallets: SELECT user_id, balance_paise FROM wallets WHERE user_id IN (?, ?) ORDER BY user_id FOR UPDATE. Always acquire locks in user_id order.
+
+6. Check idempotency: Look up (from_user, idempotency_key). Same hash => replay with no mutation. Different hash => 409.
+
+7. Check balance: If caller balance < amount, reject with 422 and do not mutate balances.
+
+8. Insert transfer: Insert transfer. Handle unique-constraint races by re-reading the existing row, comparing hashes, and returning the stored outcome without moving money twice.
+
+9. Mutate balances: Debit sender and credit recipient inside the same transaction.
+
+10. Commit: Commit only after all operations succeed; return {transfer_id, new_balance}.
+
+11. IDEMPOTENCY REQUIREMENTS
+
+Use UNIQUE (from_user, idempotency_key). Store idempotency_key, request_hash, transfer_id, status, and created_at.
+
+Same caller + same idempotency key + same request body => return original result.
+
+Same caller + same idempotency key + different request body => 409 Conflict.
+
+Never perform the balance mutation twice.
+
+12. HTTP STATUS CODES
+
+Use a global @RestControllerAdvice with JSON: { error_code, message, request_id }.
+
+13. AUTHENTICATION
+
+Implement JwtFilter extending OncePerRequestFilter.
+
+Verify HS256 using JWT_SECRET.
+
+Extract sub.
+
+Create a request-scoped CallerContext.
+
+Make caller identity available to application code.
+
+Missing or invalid JWT => 401.
+
+GET /dev/token?user=<id> mints a 1-hour HS256 JWT only when DEV_TOKENS_ENABLED=true.
+
+Public endpoints: /healthz, /readyz, /metrics, and /dev/token when enabled.
+
+Never accept caller identity from request body, headers, or query parameters.
+
+14. OBSERVABILITY
+
+CorrelationIdFilter: read/generate X-Request-Id, put it in MDC, and echo it in the response header.
+
+Structured JSON logs must include request_id and useful event fields.
+
+Log events: transfer.applied, transfer.rejected, insufficient_funds, transfer.idempotent_replay, transfer.conflict, wallet.getorcreate.race_lost, auth.failure.
+
+Micrometer counters: transfers_applied_total and transfers_rejected_total{reason="..."}.
+
+Expose Prometheus metrics at /metrics.
+
+Expose HTTP request metrics including latency information sufficient to observe p50/p95/p99.
+
+15. CONTAINERIZATION
+
+Multi-stage Dockerfile.
+
+Build stage: maven:3.9-eclipse-temurin-21.
+
+Runtime stage: eclipse-temurin:21-jre-alpine.
+
+Non-root user.
+
+HEALTHCHECK using /healthz.
+
+EXPOSE 8080.
+
+docker-compose.yml with app + postgres:16-alpine.
+
+App depends on healthy PostgreSQL.
+
+Flyway runs during application startup.
+
+Use environment variables DATABASE_URL, JWT_SECRET, PORT, DEV_TOKENS_ENABLED.
+
+Commit .env.example; never commit .env.
+
+16. TESTING
+
+Use JUnit 5, Testcontainers, and real PostgreSQL for database/concurrency behavior.
+
+TransferServiceTest
+
+Happy path
+
+Insufficient funds -> 422
+
+Self-transfer -> 400
+
+Zero amount -> 400
+
+Negative amount -> 400
+
+IdempotencyTest
+
+Same key + same body -> replay
+
+Same key + different body -> 409
+
+Money moved exactly once
+
+AuthTest
+
+Missing token -> 401
+
+Invalid token -> 401
+
+Non-participant transfer read -> 403
+
+Caller cannot spend another user's wallet
+
+ConcurrencyTest — MOST IMPORTANT
+
+Create two brand-new users.
+
+Fire 50 concurrent first-transfers.
+
+Fire 50 concurrent retries using the SAME idempotency key.
+
+Each wallet exists exactly once.
+
+No duplicate wallet rows.
+
+No 500 responses caused by concurrency.
+
+Transfer is applied exactly once for each idempotency key.
+
+Money is conserved.
+
+Balances reconcile.
+
+No wallet becomes negative.
+
+17. BURST SCRIPT
+
+Create burst.sh and make it executable. Usage:
+
+./burst.sh <BASE_URL>
+
+Generate two random new users.
+
+Obtain JWTs using /dev/token.
+
+Create/fund the necessary wallets according to the implemented test setup.
+
+Fire concurrent transfers.
+
+Fire 50 concurrent retries of one transfer using the exact same idempotency key.
+
+Retrieve both balances.
+
+Verify conservation and expected transfer behavior.
+
+Print PASS or FAIL with enough diagnostic information.
+
+Use only bash, curl, and xargs; avoid requiring complicated external tooling.
+
+18. DOCUMENTATION
+
+README.md
+
+Local development with docker compose up.
+
+Environment variables.
+
+How to obtain a development token.
+
+API examples.
+
+How to run tests.
+
+How to run burst.sh.
+
+Container-based deployment instructions.
+
+Managed PostgreSQL configuration.
+
+Health/readiness verification.
+
+WRITEUP.md
+
+Data model.
+
+Get-or-create concurrency mechanism and rejected alternatives: select-then-insert, advisory locks, Redis locks, SERIALIZABLE.
+
+Idempotency storage, matching, retention/expiry decision, and same-key/different-body detection.
+
+Authorization: JWT -> verified sub -> CallerContext.
+
+Consistency vs availability decision, especially database failure behavior.
+
+NFR priorities.
+
+Edge cases.
+
+Containerization, deployment, and observability.
+
+AI usage: what was directed to AI vs what was decided by the engineer.
+
+Free-tier / ₹0 cost note.
+
+19. PROJECT STRUCTURE
+
+paise-wallet/
+├── README.md
+├── WRITEUP.md
+├── pom.xml
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+├── .gitignore
+├── .dockerignore
+├── burst.sh
+└── src/
+    ├── main/
+    │   ├── java/com/paise/wallet/
+    │   │   ├── WalletApplication.java
+    │   │   ├── config/
+    │   │   ├── auth/
+    │   │   ├── web/
+    │   │   ├── service/
+    │   │   ├── repo/
+    │   │   └── domain/
+    │   └── resources/
+    │       ├── application.yml
+    │       ├── logback-spring.xml
+    │       └── db/migration/V1__init.sql
+    └── test/java/com/paise/wallet/
+        ├── TransferServiceTest.java
+        ├── IdempotencyTest.java
+        ├── AuthTest.java
+        └── ConcurrencyTest.java
+
+20. IMPLEMENTATION PHASES
+
+Phase 0 — Inspect & Plan
+
+Inspect repository
+
+Identify existing code
+
+Create implementation task list
+
+Identify only genuinely blocking ambiguities
+
+Phase 1 — Bootstrap
+
+pom.xml
+
+Spring Boot application
+
+application.yml
+
+Environment configuration
+
+Verify mvn test
+
+Phase 2 — Database
+
+Flyway migration
+
+Wallet schema
+
+Transfer schema
+
+Constraints
+
+Indexes
+
+Verify PostgreSQL connectivity
+
+Phase 3 — Domain & DTOs
+
+Domain models
+
+Request/response DTOs
+
+Validation
+
+Exceptions
+
+Error response model
+
+Phase 4 — Repository Layer
+
+JDBC repositories
+
+ON CONFLICT get-or-create
+
+FOR UPDATE locking
+
+Deterministic lock ordering
+
+Transfer/idempotency queries
+
+Balance updates
+
+Phase 5 — Transfer Service
+
+Atomic transaction
+
+Idempotency
+
+Race handling
+
+Insufficient funds
+
+Balance constraints
+
+Concurrency verification
+
+Phase 6 — Authentication
+
+JWT verification
+
+JwtFilter
+
+CallerContext
+
+Dev token endpoint
+
+Public/protected endpoints
+
+Phase 7 — Controllers
+
+/accounts
+
+/accounts/me
+
+/transfers
+
+/transfers/{id}
+
+/healthz
+
+/readyz
+
+Phase 8 — Error Handling & Observability
+
+RestControllerAdvice
+
+Request IDs
+
+MDC
+
+JSON logging
+
+Business events
+
+Micrometer
+
+Prometheus
+
+Phase 9 — Docker
+
+Dockerfile
+
+Non-root runtime
+
+Healthcheck
+
+Docker Compose
+
+PostgreSQL healthcheck
+
+Environment configuration
+
+Phase 10 — Tests
+
+All required unit/integration tests
+
+mvn clean test
+
+Fix root causes rather than weakening assertions
+
+Phase 11 — Concurrency & Burst
+
+ConcurrencyTest
+
+burst.sh
+
+Stress critical paths
+
+Investigate and fix every race
+
+Phase 12 — Documentation
+
+README.md
+
+WRITEUP.md
+
+API examples
+
+Deployment
+
+Burst usage
+
+AI usage
+
+Cost note
+
+Phase 13 — Final Verification
+
+Clean build
+
+Docker build
+
+Docker Compose
+
+Endpoint smoke tests
+
+Burst test
+
+Final repository review
+
+21. CODING AGENT BEHAVIOR
+
+DO
+
+Work incrementally.
+
+Maintain the task checklist.
+
+Inspect existing code before modifying it.
+
+Reuse good existing code when appropriate.
+
+Run tests frequently.
+
+Prefer simple implementations.
+
+Make concurrency assumptions explicit.
+
+Verify SQL and transaction boundaries carefully.
+
+Fix root causes.
+
+Keep the repository runnable after each meaningful phase.
+
+DON'T
+
+Generate the entire repository blindly in one shot.
+
+Skip tests until the very end.
+
+Replace PostgreSQL concurrency guarantees with in-memory locks.
+
+Introduce Redis or another external locking system unless explicitly required.
+
+Use JPA/Hibernate.
+
+Trust client-provided caller IDs.
+
+Use floating-point money.
+
+Hide concurrency bugs by weakening tests.
+
+Add unnecessary APIs/features.
+
+Over-engineer the architecture.
+
+Claim a task is complete without verification.
+
+22. OUTPUT / INTERACTION BEHAVIOR
+
+This is an interactive coding task, not a code-generation response. Do not dump every file into chat.
+
+Maintain the task plan.
+
+Work directly in the repository/workspace.
+
+Implement one phase at a time.
+
+After each phase, report briefly: what was completed, what was tested, issues discovered, and what phase comes next.
+
+Ask for input only when a decision is genuinely blocking.
+
+Otherwise make reasonable engineering decisions and continue.
+
+23. FINAL VERIFICATION
+
+mvn clean test
+docker compose build
+docker compose up
+./burst.sh <BASE_URL>
+
+Verify health, readiness, metrics, accounts, transfers, authorization, request IDs, structured logs, and concurrency behavior.
+
+No duplicate wallets.
+
+No double-applied transfers.
+
+No negative balances.
+
+No money creation or loss.
+
+No concurrency-induced 500s.
+
+Idempotent retries behave correctly.
+
+Authorization works.
+
+Health/readiness work.
+
+Metrics work.
+
+Logs contain request IDs.
+
+Application works from a clean checkout.
+
+24. FINAL RESPONSE FROM THE AGENT
+
+Only after all checks pass, provide a concise final summary:
+
+Implementation complete
+
+Tests:
+- mvn clean test: PASS/FAIL
+- Concurrency test: PASS/FAIL
+- Docker build: PASS/FAIL
+- Docker compose: PASS/FAIL
+- Burst script: PASS/FAIL
+
+Remaining issues:
+- ...
+
+Deployment status:
+- ...
+
+Files created/modified:
+- ...
+
+The highest priority is correctness under concurrent transfers and retries. A small, understandable service that never loses money is preferable to a large or over-engineered implementation.
+
+Method | Endpoint | Auth | Behavior
+
+POST | /accounts | JWT | Idempotent get-or-create caller wallet
+
+GET | /accounts/me | JWT | Return caller balance
+
+POST | /transfers | JWT | Transfer funds
+
+GET | /transfers/{id} | JWT | Participant-only transfer details
+
+GET | /healthz | None | Liveness
+
+GET | /readyz | None | Readiness including DB
+
+GET | /metrics | None | Prometheus metrics
+
+GET | /dev/token?user=<id> | None* | Development JWT generation
+
+Situation | Status
+
+Successful transfer / replay | 200
+
+Self-transfer / invalid amount / invalid request | 400
+
+Bad or missing JWT | 401
+
+Non-participant transfer read | 403
+
+Same idempotency key + different body | 409
+
+Insufficient funds | 422
+
+Database unavailable | 503

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>paise-wallet · demo</title>
+<style>
+  :root {
+    --bg:#f4f6fa; --card:#fff; --border:#e3e8ef; --text:#1a1d21;
+    --muted:#677083; --accent:#2f6fed; --accent-soft:#eaf0fe;
+    --ok:#1a7f37; --ok-soft:#e6f4ea; --err:#b42318; --err-soft:#fdebeb;
+  }
+  * { box-sizing: border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+         margin:0; padding:24px; background:var(--bg); color:var(--text); }
+  .wrap { max-width:1040px; margin:0 auto; }
+  header { display:flex; align-items:center; gap:12px; }
+  h1 { font-size:1.3rem; margin:0; }
+  .pill { font-size:.72rem; padding:3px 10px; border-radius:999px; font-weight:600; }
+  .pill.ok { background:var(--ok-soft); color:var(--ok); }
+  .pill.err { background:var(--err-soft); color:var(--err); }
+  .sub { color:var(--muted); font-size:.9rem; margin:6px 0 18px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:840px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; }
+  .card h2 { font-size:.8rem; margin:0 0 12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  label { display:block; font-size:.8rem; color:var(--muted); margin:10px 0 4px; }
+  select, input { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font:inherit; background:#fff; }
+  select:focus, input:focus { outline:2px solid var(--accent-soft); border-color:var(--accent); }
+  .row { display:flex; gap:10px; align-items:flex-end; }
+  .row > div { flex:1; }
+  button { font:inherit; font-weight:600; border-radius:8px; border:1px solid transparent; cursor:pointer; }
+  .btn-primary { background:var(--accent); color:#fff; padding:11px 18px; width:100%; }
+  .btn-primary:hover { background:#255ed8; }
+  .btn-primary:disabled { background:#b9c7ea; cursor:not-allowed; }
+  .btn-ghost { background:#fff; color:var(--accent); border-color:var(--accent); padding:8px 12px; }
+  .btn-ghost:hover { background:var(--accent-soft); }
+  .btn-mini { background:var(--accent-soft); color:var(--accent); padding:4px 10px; font-size:.78rem; }
+  .btn-mini:hover { background:#dbe6fd; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:4px; }
+  .chip { background:#fff; border:1px solid var(--border); border-radius:999px; padding:6px 14px;
+          font-size:.85rem; cursor:pointer; }
+  .chip:hover { border-color:var(--accent); color:var(--accent); }
+  .warn { display:none; background:var(--err-soft); color:var(--err); border-radius:8px;
+          padding:8px 10px; font-size:.8rem; margin-top:10px; }
+  .warn.show { display:block; }
+  .mode-toggle { display:flex; gap:6px; margin-top:4px; }
+  .mode-toggle button { flex:1; padding:8px; background:#fff; border:1px solid var(--border); border-radius:8px; font-size:.82rem; }
+  .mode-toggle button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  table { width:100%; border-collapse:collapse; font-size:.87rem; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  th { color:var(--muted); font-weight:600; font-size:.72rem; text-transform:uppercase; }
+  .bal { font-variant-numeric:tabular-nums; font-weight:600; }
+  .rupees { color:var(--muted); font-size:.76rem; }
+  .wid { font-family:ui-monospace,Menlo,monospace; font-size:.72rem; color:var(--muted); word-break:break-all; }
+  .empty { color:var(--muted); font-size:.85rem; text-align:center; padding:14px 0; }
+  .log-item { font-size:.82rem; padding:7px 0; border-bottom:1px dashed var(--border); }
+  .log-item .t { font-weight:600; }
+  .log-item.ok .t { color:var(--ok); } .log-item.err .t { color:var(--err); }
+  .log-item .meta { color:var(--muted); font-family:ui-monospace,Menlo,monospace; font-size:.7rem; }
+  .log { max-height:300px; overflow-y:auto; }
+  .hint { color:var(--muted); font-size:.78rem; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>paise-wallet</h1>
+    <span id="apiPill" class="pill">checking…</span>
+  </header>
+  <p class="sub">A wallet / P2P transfer demo. Money is integer <b>paise</b> (₹1 = 100 paise).
+    Add participants, top up if needed, then send money between them. Reusing an idempotency key replays instead of double-moving.</p>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>1 · Participants</h2>
+        <p class="hint" style="margin-top:0">Alice &amp; Bob are pre-seeded with ₹1,000 (100,000 paise).</p>
+        <div class="chips" id="chips"></div>
+        <div class="row" style="margin-top:10px">
+          <div><label>Add a custom user</label><input id="newUser" placeholder="e.g. carol" /></div>
+          <button class="btn-ghost" onclick="addCustom()">Add</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2 · Send money</h2>
+        <label>From</label>
+        <select id="fromSel"></select>
+        <label>To</label>
+        <div class="mode-toggle" id="modeToggle">
+          <button id="modeUser" class="on" onclick="setMode('user')">A participant</button>
+          <button id="modeWallet" onclick="setMode('wallet')">A wallet id</button>
+        </div>
+        <select id="toSel" style="margin-top:4px"></select>
+        <input id="toWallet" placeholder="paste a wallet id" style="display:none;margin-top:4px" />
+        <div class="row">
+          <div><label>Amount (₹)</label><input id="amount" type="number" min="0.01" step="0.01" value="10.00" /></div>
+          <div><label>Idempotency key</label><input id="idemKey" placeholder="auto" /></div>
+        </div>
+        <p class="hint" style="margin:8px 0 0" id="paiseHint">= 1,000 paise</p>
+        <div class="warn" id="selfWarn">Sending to yourself is rejected by the service.</div>
+        <button class="btn-primary" id="sendBtn" style="margin-top:12px" onclick="send()">Send ₹10.00</button>
+        <div class="row" style="margin-top:8px">
+          <button class="btn-mini" onclick="replayLast()">Replay last transfer (idempotency)</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>3 · Balances</h2>
+        <div id="accounts"></div>
+        <p class="hint" id="noneHint" style="display:none">No participants yet — add Alice or Bob above.</p>
+      </div>
+
+      <div class="card">
+        <h2>4 · Activity</h2>
+        <div class="log" id="activity"></div>
+        <p class="hint" id="emptyLog">Nothing yet.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  const users = {};          // id -> { token, walletId, balance }
+  let mode = "user";         // "user" | "wallet"
+  let last = null;           // last transfer body for replay
+
+  const $ = (id) => document.getElementById(id);
+
+  function fmtRs(paise) { return "₹" + (paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 }); }
+  function fmtPaise(rs)  { return Math.round(parseFloat(rs) * 100); }
+  function short(uuid)   { return uuid ? uuid.slice(0, 8) + "…" : "—"; }
+
+  async function api(method, url, body) {
+    const headers = {};
+    if (body) headers["Content-Type"] = "application/json";
+    const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* not json */ }
+    return { status: res.status, data };
+  }
+
+  async function authApi(method, url, body) {
+    const fromId = $("fromSel").value;
+    const headers = { "Authorization": "Bearer " + (users[fromId] ? users[fromId].token : "") };
+    if (body) headers["Content-Type"] = "application/json";
+    const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* not json */ }
+    return { status: res.status, data };
+  }
+
+  // ---------- participants ----------
+  function renderChips() {
+    $("chips").innerHTML = Object.keys(users).map(u =>
+      '<span class="chip" onclick="selectFrom(\'' + u + '\')">' + u + "</span>"
+    ).join("") || '<span class="hint">No participants yet.</span>';
+  }
+
+  function fillUsersSelects() {
+    const ids = Object.keys(users);
+    const opts = ids.map(u => '<option value="' + u + '">' + u + "</option>").join("");
+    $("fromSel").innerHTML = opts || '<option value="">— add a participant —</option>';
+    $("toSel").innerHTML = opts || '<option value="">— add a participant —</option>';
+    if (ids.length) { if (!$("fromSel").value) $("fromSel").value = ids[0]; if (!$("toSel").value) $("toSel").value = ids[ids.length > 1 ? 1 : 0]; }
+    updateSendState();
+  }
+
+  function selectFrom(u) { $("fromSel").value = u; updateSendState(); }
+
+  async function addUser(id) {
+    id = id.trim();
+    if (!id || users[id]) return;
+    const t = await api("GET", "/dev/token?user=" + encodeURIComponent(id));
+    if (t.status !== 200) { logErr("Dev endpoints disabled: " + (t.data && t.data.message)); return; }
+    const acc = await authBind(id, t.data.token);
+    if (acc.status !== 200) { logErr("Wallet create failed for " + id); return; }
+    users[id] = { token: t.data.token, walletId: acc.data.wallet_id, balance: acc.data.balance_paise };
+    renderChips(); fillUsersSelects(); renderAccounts(); logOk("Added participant " + id + " — " + fmtRs(acc.data.balance_paise));
+  }
+
+  function authBind(id, token) { // small helper: POST /accounts with a given token
+    return fetch("/accounts", { method: "POST", headers: { "Authorization": "Bearer " + token } })
+      .then(r => r.json().then(d => ({ status: r.status, data: d })));
+  }
+
+  async function addCustom() { await addUser($("newUser").value); $("newUser").value = ""; }
+
+  async function topUp(id, amountRs) {
+    const t = await api("POST", "/dev/fund", { user_id: id, amount_paise: fmtPaise(amountRs) });
+    if (t.status === 200) {
+      users[id].balance = t.data.balance_paise;
+      renderAccounts(); logOk("Topped up " + id + " with " + fmtRs(amountRs) + " → " + fmtRs(t.data.balance_paise));
+    } else logErr("Top-up failed: " + (t.data && t.data.message));
+  }
+
+  function removeUser(id) { delete users[id]; renderChips(); fillUsersSelects(); renderAccounts(); }
+
+  // ---------- accounts table ----------
+  function renderAccounts() {
+    const ids = Object.keys(users);
+    $("noneHint").style.display = ids.length ? "none" : "block";
+    if (!ids.length) { $("accounts").innerHTML = ""; return; }
+    $("accounts").innerHTML =
+      '<table><thead><tr><th>User</th><th>Wallet id</th><th>Balance</th><th></th></tr></thead><tbody>' +
+      ids.map(u =>
+        "<tr>" +
+        "<td><b>" + u + "</b></td>" +
+        '<td class="wid" title="' + users[u].walletId + '">' + short(users[u].walletId) +
+        ' <button class="btn-mini" onclick="copyWid(\'' + u + '\')">copy</button></td>' +
+        '<td class="bal">' + users[u].balance.toLocaleString("en-IN") + ' paise<br /><span class="rupees">' + fmtRs(users[u].balance) + "</span></td>" +
+        '<td style="white-space:nowrap">' +
+        '<button class="btn-mini" onclick="topUp(\'' + u + "',100)'>+₹100</button> " +
+        '<button class="btn-mini" onclick="removeUser(\'' + u + '\')">×</button></td>' +
+        "</tr>").join("") + "</tbody></table>";
+  }
+
+  async function copyWid(u) {
+    try { await navigator.clipboard.writeText(users[u].walletId); logOk("Wallet id of " + u + " copied"); }
+    catch (e) { logErr("Copy failed"); }
+  }
+
+  // ---------- transfer ----------
+  function setMode(m) {
+    mode = m;
+    $("modeUser").className = m === "user" ? "on" : "";
+    $("modeWallet").className = m === "wallet" ? "on" : "";
+    $("toSel").style.display = m === "user" ? "" : "none";
+    $("toWallet").style.display = m === "wallet" ? "" : "none";
+    updateSendState();
+  }
+
+  function current() {
+    const rs = parseFloat($("amount").value) || 0;
+    const paise = fmtPaise(rs);
+    $("paiseHint").textContent = "= " + paise.toLocaleString("en-IN") + " paise";
+    $("sendBtn").textContent = "Send " + (paise ? fmtRs(paise) : "₹0.00");
+    return paise;
+  }
+  $("amount").addEventListener("input", current);
+
+  function updateSendState() {
+    const from = $("fromSel").value;
+    const toSelf = mode === "user" && from && $("toSel").value === from;
+    $("selfWarn").classList.toggle("show", toSelf);
+    $("sendBtn").disabled = !from || toSelf;
+  }
+
+  function buildBody() {
+    const paise = current();
+    const key = $("idemKey").value.trim() || ("t-" + Date.now());
+    if (mode === "user") return { to_user: $("toSel").value, amount_paise: paise, idempotency_key: key };
+    return { to_wallet_id: $("toWallet").value.trim(), amount_paise: paise, idempotency_key: key };
+  }
+
+  async function send() {
+    const from = $("fromSel").value;
+    if (!from) return;
+    if (mode === "wallet" && !$("toWallet").value.trim()) { logErr("Paste a wallet id first."); return; }
+    const paise = current();
+    if (paise <= 0) { logErr("Amount must be greater than zero."); return; }
+    const body = buildBody();
+    last = { from: from, body: body };
+    const r = await authApi("POST", "/transfers", body);
+    if (r.status === 200) {
+      users[from].balance = r.data.new_balance;
+      if (mode === "user") await refreshUser($("toSel").value);
+      renderAccounts();
+      logOk("Sent " + fmtRs(paise) + " from " + from + " (txn " + short(r.data.transfer_id) + ")");
+    } else {
+      await refreshUser(from);
+      renderAccounts();
+      logErr((r.data && r.data.error_code ? r.data.error_code + " — " : "") + (r.data && r.data.message ? r.data.message : "status " + r.status));
+    }
+  }
+
+  async function refreshUser(id) {
+    if (!users[id]) return;
+    const res = await fetch("/accounts/me", { headers: { "Authorization": "Bearer " + users[id].token } });
+    if (res.ok) {
+      const d = await res.json();
+      users[id].balance = d.balance_paise;
+      users[id].walletId = d.wallet_id;
+    }
+  }
+
+  async function replayLast() {
+    if (!last) { logErr("Nothing to replay yet."); return; }
+    if (!users[last.from]) { logErr("Sender removed."); return; }
+    const from = last.from;
+    const r = await authApi("POST", "/transfers", last.body);
+    if (r.status === 200) { users[from].balance = r.data.new_balance; renderAccounts(); logOk("Replay → same txn " + short(r.data.transfer_id) + ", no double-move"); }
+    else logErr((r.data && r.data.message) || ("status " + r.status));
+  }
+
+  // ---------- activity log ----------
+  function logItem(kind, text, meta) {
+    $("emptyLog").style.display = "none";
+    const el = document.createElement("div");
+    el.className = "log-item " + kind;
+    el.innerHTML = '<span class="t">' + (kind === "ok" ? "✓ " : "✗ ") + text + "</span>" +
+      (meta ? '<div class="meta">' + meta + "</div>" : "");
+    const box = $("activity");
+    box.prepend(el);
+    while (box.children.length > 60) box.lastChild.remove();
+  }
+  function logOk(text, meta)  { logItem("ok", text, meta); }
+  function logErr(text, meta) { logItem("err", text, meta); }
+
+  // ---------- init ----------
+  async function boot() {
+    const h = await api("GET", "/healthz");
+    $("apiPill").textContent = h.status === 200 ? "API ready" : "API unreachable";
+    $("apiPill").className = "pill " + (h.status === 200 ? "ok" : "err");
+    if (h.status !== 200) return;
+    await addUser("alice");
+    await addUser("bob");
+    $("fromSel").value = "alice";
+    $("toSel").value = "bob";
+    updateSendState();
+  }
+  boot();
+</script>
+</body>
+</html>
