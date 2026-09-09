@@ -46,7 +46,7 @@ mvn spring-boot:run
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/paise_wallet` | JDBC URL. Set `DATABASE_URL` to a `jdbc:` or `postgresql://` URL for a **managed Postgres** (Neon/Supabase/Railway). |
+| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/paise_wallet` | JDBC URL. Either `jdbc:postgresql://…` **or** libpq-style `postgres://user:pass@host:port/db` (what Railway/Neon/Supabase/Render inject by default); libpq credentials are extracted automatically. |
 | `SPRING_DATASOURCE_URL` | – | Spring JDBC URL (takes precedence in Spring). |
 | `SPRING_DATASOURCE_USERNAME` | – | DB user. |
 | `SPRING_DATASOURCE_PASSWORD` | – | DB password. |
@@ -225,9 +225,17 @@ The app runs unchanged against any PostgreSQL 14+ service. The only difference i
    Use the transaction/port-5432 pooler endpoint if the direct endpoint is throttled.
 3. Same Flyway + `./burst.sh` flow as above.
 
-**Railway**
-1. Railway's Postgres plugin injects a connection string into `DATABASE_URL` automatically; otherwise grab it from the service's "Connect" tab.
-2. Set `DATABASE_URL` to the railway `postgresql://…` URL and run.
+**Railway (Postgres + deployment)**
+1. `railway init` in `paise-wallet/` (or create a new service from the GitHub repo with root directory set to `paise-wallet`).
+2. `railway add --plugin postgresql` — no config needed; Railway injects `DATABASE_URL` into the app service. The libpq `postgres://…` URL is converted to a JDBC URL automatically on boot, so Flyway creates `wallets`/`transfers` against the managed Postgres.
+3. Set env vars on the service. For the demo UI + `burst.sh` to work, dev tokens must be enabled on a throwaway deployment:
+   ```bash
+   railway variables --set "JWT_SECRET=$(openssl rand -hex 32)"
+   railway variables --set DEV_TOKENS_ENABLED=true
+   ```
+   Set `DEV_TOKENS_ENABLED=false` for any real deployment; `PORT` is injected by Railway and respected via `${PORT:8080}`.
+4. `railway up` (builds the `Dockerfile`) and `railway domain` to open a public URL. Health checks hit `/healthz` automatically (`railway.json`).
+5. `./burst.sh <your-railway-url>` to run the correctness gate against the live deployment.
 
 Notes that apply to serverless providers (Neon/Supabase):
 - Free plans may **suspend idle projects**; the first request after idle may wait on a cold start — entirely fine for the correctness gate, just slow.
