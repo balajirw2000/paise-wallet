@@ -161,12 +161,28 @@
   }
 
   function fillUsersSelects() {
-    const ids = Object.keys(users);
+    const ids = allIds();
     const opts = ids.map(u => '<option value="' + u + '">' + u + "</option>").join("");
-    $("fromSel").innerHTML = opts || '<option value="">— add a participant —</option>';
-    $("toSel").innerHTML = opts || '<option value="">— add a participant —</option>';
+    $("fromSel").innerHTML = opts || '<option value="">— add a user —</option>';
+    $("toSel").innerHTML = opts || '<option value="">— add a user —</option>';
     if (ids.length) { if (!$("fromSel").value) $("fromSel").value = ids[0]; if (!$("toSel").value) $("toSel").value = ids[ids.length > 1 ? 1 : 0]; }
     updateSendState();
+  }
+
+  // Every user in the database (participants included), for the Send Money selects.
+  function allIds() {
+    const ids = new Set(Object.keys(users));
+    if (Array.isArray(allUsers)) allUsers.forEach(a => ids.add(a.user_id));
+    return [...ids].sort((a, b) => a.localeCompare(b));
+  }
+
+  function walletIdOf(u) {
+    if (users[u] && users[u].walletId) return users[u].walletId;
+    if (Array.isArray(allUsers)) {
+      const a = allUsers.find(x => x.user_id === u);
+      if (a && a.wallet_id) return a.wallet_id;
+    }
+    return "";
   }
 
   function selectFrom(u) { $("fromSel").value = u; updateSendState(); }
@@ -198,12 +214,9 @@
     } else logErr("Top-up failed: " + (t.data && t.data.message));
   }
 
-  function removeUser(id) { delete users[id]; renderChips(); fillUsersSelects(); renderAccounts(); refreshAccounts(); }
-
   // ---------- accounts table ----------
-  // Always shows every wallet in the database (one row per user). Participants
-  // also get a remove control; non-participants get an "add" control so they can
-  // be turned into a participant without leaving the table.
+  // Always shows every wallet in the database (one row per user), read-only
+  // except for the optional +₹100 dev top-up.
   async function refreshAccounts() {
     const r = await api("GET", "/dev/accounts");
     if (r.status === 200 && Array.isArray(r.data)) {
@@ -211,6 +224,7 @@
     } else {
       allUsers = null; // dev listing unavailable → fall back to participants
     }
+    fillUsersSelects();
     renderAccounts();
   }
 
@@ -233,10 +247,7 @@
         ' <button class="btn-mini" onclick="copyWid(\'' + u + '\')">copy</button></td>' +
         '<td class="bal">' + bal.toLocaleString("en-IN") + ' paise<br /><span class="rupees">' + fmtRs(bal) + "</span></td>" +
         '<td style="white-space:nowrap">' +
-        '<button class="btn-mini" onclick="topUp(\'' + u + "',100)'>+₹100</button> " +
-        (isP
-          ? '<button class="btn-mini" onclick="removeUser(\'' + u + '\')">×</button>'
-          : '<button class="btn-mini" onclick="addUser(\'' + u + '\')">add</button>') +
+        '<button class="btn-mini" onclick="topUp(\'' + u + "',100)'>+₹100</button>" +
         "</td></tr>";
       }).join("") + "</tbody></table>";
   }
@@ -276,15 +287,15 @@
     const paise = current();
     let ready = !!from && paise > 0;
     let self = false;
-    if (from && users[from]) {
+    if (from) {
       if (mode === "user") {
         const to = $("toSel").value;
-        ready = ready && !!to && to !== from && users[to] !== undefined;
+        ready = ready && !!to && to !== from;
         self = to === from;
       } else {
         const wid = $("toWallet").value.trim();
         ready = ready && wid.length > 0;
-        self = wid.length > 0 && wid === users[from].walletId;
+        self = wid.length > 0 && wid === walletIdOf(from);
       }
     }
     $("selfWarn").classList.toggle("show", self);
@@ -304,16 +315,20 @@
     if (mode === "wallet" && !$("toWallet").value.trim()) { logErr("Paste a wallet id first."); return; }
     const paise = current();
     if (paise <= 0) { logErr("Amount must be greater than zero."); return; }
+    if (!users[from]) { // not a participant yet → mint a token on the fly
+      await addUser(from);
+      if (!users[from]) { logErr("Cannot act as " + from + " (dev endpoints disabled?)"); return; }
+    }
     const body = buildBody();
     last = { from: from, body: body };
     const r = await authApi("POST", "/transfers", body);
     if (r.status === 200) {
-      users[from].balance = r.data.new_balance;
+      if (users[from]) users[from].balance = r.data.new_balance;
       if (mode === "user") {
         await refreshUser($("toSel").value);
       } else {
         const toWid = $("toWallet").value.trim();
-        const toUser = Object.keys(users).find(u => users[u].walletId === toWid);
+        const toUser = allIds().find(u => walletIdOf(u) === toWid);
         if (toUser) await refreshUser(toUser);
       }
       await refreshAccounts();
