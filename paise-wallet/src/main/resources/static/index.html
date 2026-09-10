@@ -239,13 +239,29 @@
     $("sendBtn").textContent = "Send " + (paise ? fmtRs(paise) : "₹0.00");
     return paise;
   }
-  $("amount").addEventListener("input", current);
+  $("amount").addEventListener("input", () => { current(); updateSendState(); });
+  $("fromSel").addEventListener("change", updateSendState);
+  $("toSel").addEventListener("change", updateSendState);
+  $("toWallet").addEventListener("input", updateSendState);
 
   function updateSendState() {
     const from = $("fromSel").value;
-    const toSelf = mode === "user" && from && $("toSel").value === from;
-    $("selfWarn").classList.toggle("show", toSelf);
-    $("sendBtn").disabled = !from || toSelf;
+    const paise = current();
+    let ready = !!from && paise > 0;
+    let self = false;
+    if (from && users[from]) {
+      if (mode === "user") {
+        const to = $("toSel").value;
+        ready = ready && !!to && to !== from && users[to] !== undefined;
+        self = to === from;
+      } else {
+        const wid = $("toWallet").value.trim();
+        ready = ready && wid.length > 0;
+        self = wid.length > 0 && wid === users[from].walletId;
+      }
+    }
+    $("selfWarn").classList.toggle("show", self);
+    $("sendBtn").disabled = !ready;
   }
 
   function buildBody() {
@@ -266,7 +282,13 @@
     const r = await authApi("POST", "/transfers", body);
     if (r.status === 200) {
       users[from].balance = r.data.new_balance;
-      if (mode === "user") await refreshUser($("toSel").value);
+      if (mode === "user") {
+        await refreshUser($("toSel").value);
+      } else {
+        const toWid = $("toWallet").value.trim();
+        const toUser = Object.keys(users).find(u => users[u].walletId === toWid);
+        if (toUser) await refreshUser(toUser);
+      }
       renderAccounts();
       logOk("Sent " + fmtRs(paise) + " from " + from + " (txn " + short(r.data.transfer_id) + ")");
     } else {

@@ -1,0 +1,318 @@
+openapi: 3.0.3
+info:
+  title: Paise Wallet API
+  description: |
+    Wallet / P2P transfer service. Money is held as integer paise. All business
+    endpoints require a Bearer JWT; the caller's identity is always the verified
+    JWT subject, never a header or body field.
+  version: 1.0.0
+tags:
+  - name: accounts
+    description: Create and read the caller's own wallet
+  - name: transfers
+    description: Move paise between wallets with idempotency
+  - name: health
+    description: Liveness and readiness probes
+  - name: dev
+    description: Developer-only helpers (disabled unless DEV_TOKENS_ENABLED=true)
+  - name: metrics
+    description: Prometheus text metrics
+security:
+  - bearerAuth: []
+
+paths:
+  /accounts:
+    post:
+      tags: [accounts]
+      operationId: createAccount
+      summary: Get or create the caller's wallet
+      responses:
+        '200':
+          description: Wallet created or already present
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /accounts/me:
+    get:
+      tags: [accounts]
+      operationId: getMyAccount
+      summary: Current caller balance
+      responses:
+        '200':
+          description: The caller's wallet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /transfers:
+    post:
+      tags: [transfers]
+      operationId: createTransfer
+      summary: Transfer paise (idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '200':
+          description: Transfer applied (or idempotent replay of an earlier one)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Same idempotency key used with a different body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Insufficient funds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /transfers/{transfer_id}:
+    get:
+      tags: [transfers]
+      operationId: getTransfer
+      summary: Read a transfer (participants only)
+      parameters:
+        - name: transfer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Transfer details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferDetails'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller is not a participant of this transfer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /healthz:
+    get:
+      tags: [health]
+      operationId: healthz
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+  /readyz:
+    get:
+      tags: [health]
+      operationId: readyz
+      summary: Readiness probe (includes a database check)
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Not ready (database unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+  /dev/token:
+    get:
+      tags: [dev]
+      operationId: devToken
+      summary: Mint a development JWT for a user (dev only)
+      security: []
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A one-hour HS256 JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /dev/fund:
+    post:
+      tags: [dev]
+      operationId: devFund
+      summary: Credit a user's wallet for testing (dev only)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FundRequest'
+      responses:
+        '200':
+          description: The funded wallet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /metrics:
+    get:
+      tags: [metrics]
+      operationId: scrapeMetrics
+      summary: Prometheus text metrics
+      security: []
+      responses:
+        '200':
+          description: Metrics exposed
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Prometheus exposition format
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Error:
+      description: Request failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    AccountResponse:
+      type: object
+      required: [user_id, wallet_id, balance_paise]
+      properties:
+        user_id:
+          type: string
+        wallet_id:
+          type: string
+          format: uuid
+        balance_paise:
+          type: integer
+          format: int64
+    TransferRequest:
+      type: object
+      required: [amount_paise, idempotency_key]
+      properties:
+        to_user:
+          type: string
+          description: Recipient username/email/phone; wallet is created if absent.
+        to_wallet_id:
+          type: string
+          format: uuid
+          description: Specific wallet; must already exist.
+        amount_paise:
+          type: integer
+          format: int64
+          minimum: 1
+        idempotency_key:
+          type: string
+          minLength: 1
+      description: Provide exactly one of to_user or to_wallet_id.
+    TransferResponse:
+      type: object
+      required: [transfer_id, new_balance]
+      properties:
+        transfer_id:
+          type: string
+          format: uuid
+        new_balance:
+          type: integer
+          format: int64
+    TransferDetails:
+      type: object
+      required: [transfer_id, from_user, to_user, amount_paise, status, created_at]
+      properties:
+        transfer_id:
+          type: string
+          format: uuid
+        from_user:
+          type: string
+        to_user:
+          type: string
+        amount_paise:
+          type: integer
+          format: int64
+        status:
+          type: string
+        created_at:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error_code, message, request_id]
+      properties:
+        error_code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+    TokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+    FundRequest:
+      type: object
+      required: [user_id, amount_paise]
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+        amount_paise:
+          type: integer
+          format: int64
+          minimum: 1

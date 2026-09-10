@@ -81,6 +81,8 @@ Tokens are HS256 JWTs valid for 1 hour. On a real deployment you would use your 
 
 All endpoints below (except health/readiness/metrics and dev endpoints) require `Authorization: Bearer <JWT>`. The caller's identity is **always** the verified JWT `sub` — never a header/body field.
 
+The API contract is spec-driven: `src/main/resources/openapi.yaml` is the single source of truth. Every build runs `openapi-generator-maven-plugin` (delegate pattern) to generate the HTTP-bound `*ApiController` classes and request/response models from the spec. The generated controllers contain no business logic — they delegate to `@Service` beans implementing each generated `*ApiDelegate` interface in `com.paise.wallet.web`. To change the API, edit `openapi.yaml` and rebuild (`mvn generate-sources`); the service invariants live in `TransferService`.
+
 | Method | Endpoint | Auth | Behavior |
 |---|---|---|---|
 | `POST` | `/accounts` | JWT | Idempotent get-or-create of the caller's wallet → `{ balance_paise }` |
