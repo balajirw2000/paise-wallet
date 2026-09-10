@@ -111,7 +111,7 @@
       <div class="card">
         <h2>3 · Balances</h2>
         <div id="accounts"></div>
-        <p class="hint" id="noneHint" style="display:none">No participants yet — add Alice or Bob above.</p>
+        <p class="hint" id="noneHint" style="display:none">No wallets in the database yet.</p>
       </div>
 
       <div class="card">
@@ -123,7 +123,8 @@
   </div>
 </div>
 <script>
-  const users = {};          // id -> { token, walletId, balance }
+  const users = {};          // participant id -> { token, walletId, balance }
+  let allUsers = null;       // full wallets table from /dev/accounts: [{user_id, wallet_id, balance_paise}]
   let mode = "user";         // "user" | "wallet"
   let last = null;           // last transfer body for replay
 
@@ -178,7 +179,7 @@
     const acc = await authBind(id, t.data.token);
     if (acc.status !== 200) { logErr("Wallet create failed for " + id); return; }
     users[id] = { token: t.data.token, walletId: acc.data.wallet_id, balance: acc.data.balance_paise };
-    renderChips(); fillUsersSelects(); renderAccounts(); logOk("Added participant " + id + " — " + fmtRs(acc.data.balance_paise));
+    renderChips(); fillUsersSelects(); await refreshAccounts(); logOk("Added participant " + id + " — " + fmtRs(acc.data.balance_paise));
   }
 
   function authBind(id, token) { // small helper: POST /accounts with a given token
@@ -191,34 +192,60 @@
   async function topUp(id, amountRs) {
     const t = await api("POST", "/dev/fund", { user_id: id, amount_paise: fmtPaise(amountRs) });
     if (t.status === 200) {
-      users[id].balance = t.data.balance_paise;
-      renderAccounts(); logOk("Topped up " + id + " with " + fmtRs(amountRs) + " → " + fmtRs(t.data.balance_paise));
+      if (users[id]) users[id].balance = t.data.balance_paise;
+      await refreshAccounts();
+      logOk("Topped up " + id + " with " + fmtRs(amountRs) + " → " + fmtRs(t.data.balance_paise));
     } else logErr("Top-up failed: " + (t.data && t.data.message));
   }
 
-  function removeUser(id) { delete users[id]; renderChips(); fillUsersSelects(); renderAccounts(); }
+  function removeUser(id) { delete users[id]; renderChips(); fillUsersSelects(); renderAccounts(); refreshAccounts(); }
 
   // ---------- accounts table ----------
+  // Always shows every wallet in the database (one row per user). Participants
+  // also get a remove control; non-participants get an "add" control so they can
+  // be turned into a participant without leaving the table.
+  async function refreshAccounts() {
+    const r = await api("GET", "/dev/accounts");
+    if (r.status === 200 && Array.isArray(r.data)) {
+      allUsers = r.data;
+    } else {
+      allUsers = null; // dev listing unavailable → fall back to participants
+    }
+    renderAccounts();
+  }
+
   function renderAccounts() {
-    const ids = Object.keys(users);
-    $("noneHint").style.display = ids.length ? "none" : "block";
-    if (!ids.length) { $("accounts").innerHTML = ""; return; }
+    const listing = Array.isArray(allUsers) ? allUsers
+        : Object.keys(users).map(id =>
+            ({ user_id: id, wallet_id: users[id].walletId, balance_paise: users[id].balance }));
+    $("noneHint").style.display = listing.length ? "none" : "block";
+    if (!listing.length) { $("accounts").innerHTML = ""; return; }
     $("accounts").innerHTML =
       '<table><thead><tr><th>User</th><th>Wallet id</th><th>Balance</th><th></th></tr></thead><tbody>' +
-      ids.map(u =>
-        "<tr>" +
+      listing.map(a => {
+        const u = a.user_id;
+        const isP = !!users[u];
+        const bal = Number.isFinite(a.balance_paise) ? a.balance_paise : (isP ? users[u].balance : 0);
+        const wid = a.wallet_id || (isP ? users[u].walletId : "");
+        return "<tr>" +
         "<td><b>" + u + "</b></td>" +
-        '<td class="wid" title="' + users[u].walletId + '">' + short(users[u].walletId) +
+        '<td class="wid" title="' + wid + '">' + short(wid) +
         ' <button class="btn-mini" onclick="copyWid(\'' + u + '\')">copy</button></td>' +
-        '<td class="bal">' + users[u].balance.toLocaleString("en-IN") + ' paise<br /><span class="rupees">' + fmtRs(users[u].balance) + "</span></td>" +
+        '<td class="bal">' + bal.toLocaleString("en-IN") + ' paise<br /><span class="rupees">' + fmtRs(bal) + "</span></td>" +
         '<td style="white-space:nowrap">' +
         '<button class="btn-mini" onclick="topUp(\'' + u + "',100)'>+₹100</button> " +
-        '<button class="btn-mini" onclick="removeUser(\'' + u + '\')">×</button></td>' +
-        "</tr>").join("") + "</tbody></table>";
+        (isP
+          ? '<button class="btn-mini" onclick="removeUser(\'' + u + '\')">×</button>'
+          : '<button class="btn-mini" onclick="addUser(\'' + u + '\')">add</button>') +
+        "</td></tr>";
+      }).join("") + "</tbody></table>";
   }
 
   async function copyWid(u) {
-    try { await navigator.clipboard.writeText(users[u].walletId); logOk("Wallet id of " + u + " copied"); }
+    const row = users[u] ? users[u] : (Array.isArray(allUsers) ? allUsers.find(a => a.user_id === u) : null);
+    const wid = row ? (row.walletId || row.wallet_id) : "";
+    if (!wid) { logErr("No wallet id for " + u); return; }
+    try { await navigator.clipboard.writeText(wid); logOk("Wallet id of " + u + " copied"); }
     catch (e) { logErr("Copy failed"); }
   }
 
@@ -289,11 +316,11 @@
         const toUser = Object.keys(users).find(u => users[u].walletId === toWid);
         if (toUser) await refreshUser(toUser);
       }
-      renderAccounts();
+      await refreshAccounts();
       logOk("Sent " + fmtRs(paise) + " from " + from + " (txn " + short(r.data.transfer_id) + ")");
     } else {
       await refreshUser(from);
-      renderAccounts();
+      await refreshAccounts();
       logErr((r.data && r.data.error_code ? r.data.error_code + " — " : "") + (r.data && r.data.message ? r.data.message : "status " + r.status));
     }
   }
@@ -313,7 +340,7 @@
     if (!users[last.from]) { logErr("Sender removed."); return; }
     const from = last.from;
     const r = await authApi("POST", "/transfers", last.body);
-    if (r.status === 200) { users[from].balance = r.data.new_balance; renderAccounts(); logOk("Replay → same txn " + short(r.data.transfer_id) + ", no double-move"); }
+    if (r.status === 200) { users[from].balance = r.data.new_balance; await refreshAccounts(); logOk("Replay → same txn " + short(r.data.transfer_id) + ", no double-move"); }
     else logErr((r.data && r.data.message) || ("status " + r.status));
   }
 
@@ -339,6 +366,7 @@
     if (h.status !== 200) return;
     await addUser("alice");
     await addUser("bob");
+    await refreshAccounts();
     $("fromSel").value = "alice";
     $("toSel").value = "bob";
     updateSendState();

@@ -93,6 +93,8 @@ The API contract is spec-driven: `src/main/resources/openapi.yaml` is the single
 | `GET` | `/readyz` | none | Readiness (includes DB check) |
 | `GET` | `/metrics` | none | Prometheus text metrics |
 | `GET` | `/dev/token?user=<id>` | none* | Mint dev JWT (* dev-only flag) |
+| `GET` | `/dev/accounts` | none* | List all wallets (balances of every user; powers the demo Balances table) (* dev-only flag) |
+| `POST` | `/dev/fund` | none* | Credit a user's wallet for testing (* dev-only flag) |
 
 ### Create / read your wallet
 

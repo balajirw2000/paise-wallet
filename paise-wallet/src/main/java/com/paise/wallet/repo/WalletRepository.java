@@ -67,6 +67,13 @@ public class WalletRepository {
         return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
     }
 
+    public List<Wallet> findAll() {
+        return jdbc.query(
+                "SELECT wallet_id, user_id, balance_paise, created_at FROM wallets ORDER BY user_id",
+                ROW_MAPPER
+        );
+    }
+
     public void debit(String userId, long amount) {
         jdbc.update(
                 "UPDATE wallets SET balance_paise = balance_paise - ? WHERE user_id = ?",

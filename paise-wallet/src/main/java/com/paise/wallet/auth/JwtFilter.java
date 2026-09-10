@@ -34,6 +34,7 @@ public class JwtFilter extends OncePerRequestFilter {
                 || path.equals("/readyz")
                 || path.equals("/metrics")
                 || (path.startsWith("/dev/token") && props.isDevTokensEnabled())
+                || (path.equals("/dev/accounts") && props.isDevTokensEnabled())
                 || path.startsWith("/actuator");
     }
 

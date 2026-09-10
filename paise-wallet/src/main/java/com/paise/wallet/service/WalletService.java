@@ -4,6 +4,7 @@ import com.paise.wallet.domain.Wallet;
 import com.paise.wallet.repo.WalletRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -34,6 +35,10 @@ public class WalletService {
 
     public Optional<Wallet> findByWalletId(UUID walletId) {
         return walletRepo.findByWalletId(walletId);
+    }
+
+    public List<Wallet> findAll() {
+        return walletRepo.findAll();
     }
 
     public Optional<Wallet> lockForUpdate(String userId) {

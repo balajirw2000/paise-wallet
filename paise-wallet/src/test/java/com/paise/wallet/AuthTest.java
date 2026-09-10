@@ -55,6 +55,16 @@ public class AuthTest extends BaseIntegrationTest {
     }
 
     @Test
+    void devListAccounts_returnsAllWallets() throws Exception {
+        walletService.getOrCreate("listme_1");
+        walletService.getOrCreate("listme_2");
+        mockMvc.perform(get("/dev/accounts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.user_id == 'listme_1')]").exists())
+                .andExpect(jsonPath("$[?(@.user_id == 'alice')]").exists());
+    }
+
+    @Test
     void cannotSpendOtherUsersWallet() throws Exception {
         String token = getTokenFor("spender");
         mockMvc.perform(post("/transfers")

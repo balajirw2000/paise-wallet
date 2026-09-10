@@ -186,6 +186,21 @@ paths:
                 $ref: '#/components/schemas/AccountResponse'
         '400':
           $ref: '#/components/responses/Error'
+  /dev/accounts:
+    get:
+      tags: [dev]
+      operationId: listAccounts
+      summary: List all wallets with balances (dev only)
+      security: []
+      responses:
+        '200':
+          description: All wallets, ordered by user id
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AccountResponse'
   /metrics:
     get:
       tags: [metrics]

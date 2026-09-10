@@ -12,6 +12,9 @@ import com.paise.wallet.web.model.TokenResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
 @Service
 public class DevApiDelegateImpl implements DevApiDelegate {
 
@@ -47,5 +50,16 @@ public class DevApiDelegateImpl implements DevApiDelegate {
         walletService.credit(userId, amountPaise);
         Wallet wallet = walletService.getBalance(userId).orElseThrow();
         return ResponseEntity.ok(ApiModelMapper.account(wallet));
+    }
+
+    @Override
+    public ResponseEntity<List<AccountResponse>> listAccounts() {
+        if (!props.isDevTokensEnabled()) {
+            throw new InvalidTransferException("Dev endpoints are not enabled");
+        }
+        List<AccountResponse> accounts = walletService.findAll().stream()
+                .map(ApiModelMapper::account)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(accounts);
     }
 }
