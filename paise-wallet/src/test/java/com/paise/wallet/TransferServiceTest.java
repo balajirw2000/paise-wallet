@@ -5,6 +5,7 @@ import com.paise.wallet.domain.InvalidTransferException;
 import com.paise.wallet.domain.TransferRequest;
 import com.paise.wallet.domain.TransferResponse;
 import com.paise.wallet.service.TransferService;
+import com.paise.wallet.service.WalletService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,6 +22,9 @@ public class TransferServiceTest extends BaseIntegrationTest {
     private TransferService transferService;
 
     @Autowired
+    private WalletService walletService;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     private void fund(String userId, long amount) {
@@ -31,8 +35,8 @@ public class TransferServiceTest extends BaseIntegrationTest {
     void happyPath_transfersCorrectly() {
         String a = "a_" + UUID.randomUUID().toString().substring(0, 8);
         String b = "b_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
-        transferService.getOrCreateWallet(b);
+        walletService.getOrCreate(a);
+        walletService.getOrCreate(b);
         fund(a, 1000);
 
         TransferResponse resp = transferService.transfer(a, new TransferRequest(b, 250, "hp-1"));
@@ -48,8 +52,8 @@ public class TransferServiceTest extends BaseIntegrationTest {
     void insufficientFunds_rejected422() {
         String a = "poor_" + UUID.randomUUID().toString().substring(0, 8);
         String b = "ok_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
-        transferService.getOrCreateWallet(b);
+        walletService.getOrCreate(a);
+        walletService.getOrCreate(b);
         fund(a, 50);
 
         assertThrows(InsufficientFundsException.class,
@@ -61,7 +65,7 @@ public class TransferServiceTest extends BaseIntegrationTest {
     @Test
     void selfTransfer_rejected400() {
         String a = "self_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
+        walletService.getOrCreate(a);
         fund(a, 1000);
         assertThrows(InvalidTransferException.class,
                 () -> transferService.transfer(a, new TransferRequest(a, 10, "self-1")));
@@ -83,7 +87,7 @@ public class TransferServiceTest extends BaseIntegrationTest {
     void createsCounterpartyWalletAutomatically() {
         String sender = "auto_" + UUID.randomUUID().toString().substring(0, 8);
         String recipient = "auto2_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(sender);
+        walletService.getOrCreate(sender);
         fund(sender, 1000);
 
         // recipient has NO wallet yet — should be auto-created and credited in one tx
@@ -100,8 +104,8 @@ public class TransferServiceTest extends BaseIntegrationTest {
     void recipientWalletId_mustAlreadyExist_happyPath() {
         String sender = "wid_owner_" + UUID.randomUUID().toString().substring(0, 8);
         String recipient = "wid_rec_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(sender);
-        transferService.getOrCreateWallet(recipient);
+        walletService.getOrCreate(sender);
+        walletService.getOrCreate(recipient);
         fund(sender, 1000);
         UUID recipientWalletId = jdbc.queryForObject(
                 "SELECT wallet_id FROM wallets WHERE user_id = ?", UUID.class, recipient);
@@ -117,7 +121,7 @@ public class TransferServiceTest extends BaseIntegrationTest {
     @Test
     void recipientWalletId_doesNotExist_rejectedAndNotCreated() {
         String sender = "wid_miss_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(sender);
+        walletService.getOrCreate(sender);
         fund(sender, 1000);
 
         UUID randomWalletId = UUID.randomUUID();
@@ -135,7 +139,7 @@ public class TransferServiceTest extends BaseIntegrationTest {
     @Test
     void selfTransfer_viaWalletId_rejected400() {
         String a = "wid_self_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
+        walletService.getOrCreate(a);
         fund(a, 1000);
         UUID ownWalletId = jdbc.queryForObject(
                 "SELECT wallet_id FROM wallets WHERE user_id = ?", UUID.class, a);
@@ -148,8 +152,8 @@ public class TransferServiceTest extends BaseIntegrationTest {
     void sameKey_sameRecipientDifferentIdentifier_replaysInsteadOfDoubleMove() {
         String a = "replay_owner_" + UUID.randomUUID().toString().substring(0, 8);
         String b = "replay_recip_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
-        transferService.getOrCreateWallet(b);
+        walletService.getOrCreate(a);
+        walletService.getOrCreate(b);
         fund(a, 1000);
         UUID bWalletId = jdbc.queryForObject(
                 "SELECT wallet_id FROM wallets WHERE user_id = ?", UUID.class, b);

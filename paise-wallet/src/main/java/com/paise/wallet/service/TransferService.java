@@ -2,12 +2,10 @@ package com.paise.wallet.service;
 
 import com.paise.wallet.domain.*;
 import com.paise.wallet.repo.TransferRepository;
-import com.paise.wallet.repo.WalletRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -26,15 +24,15 @@ public class TransferService {
     private static final Logger log = LoggerFactory.getLogger(TransferService.class);
 
     private final TransactionTemplate txTemplate;
-    private final WalletRepository walletRepo;
+    private final WalletService walletService;
     private final TransferRepository transferRepo;
     private final Counter appliedCounter;
     private final Counter rejectedCounter;
 
-    public TransferService(JdbcTemplate jdbc, WalletRepository walletRepo,
+    public TransferService(WalletService walletService,
                            TransferRepository transferRepo, MeterRegistry meterRegistry,
                            org.springframework.transaction.PlatformTransactionManager txManager) {
-        this.walletRepo = walletRepo;
+        this.walletService = walletService;
         this.transferRepo = transferRepo;
         this.appliedCounter = Counter.builder("transfers_applied_total").register(meterRegistry);
         this.rejectedCounter = Counter.builder("transfers_rejected_total").register(meterRegistry);
@@ -75,11 +73,11 @@ public class TransferService {
             //    username/email/phone (to_user) -> user resolver: create the wallet if absent.
             String recipientUserId;
             if (request.toWalletId() != null) {
-                recipientUserId = walletRepo.findByWalletId(request.toWalletId())
+                recipientUserId = walletService.findByWalletId(request.toWalletId())
                         .map(Wallet::userId)
                         .orElseThrow(() -> new InvalidTransferException("Recipient wallet not found"));
             } else {
-                walletRepo.getOrCreate(request.toUser());
+                walletService.getOrCreate(request.toUser());
                 recipientUserId = request.toUser();
             }
 
@@ -89,7 +87,7 @@ public class TransferService {
             }
 
             // 2. Get-or-create the caller's wallet (INSERT ON CONFLICT DO NOTHING)
-            walletRepo.getOrCreate(callerId);
+            walletService.getOrCreate(callerId);
 
             String requestHash = sha256(recipientUserId + ":" + request.amountPaise());
 
@@ -97,8 +95,8 @@ public class TransferService {
             String first = callerId.compareTo(recipientUserId) <= 0 ? callerId : recipientUserId;
             String second = callerId.compareTo(recipientUserId) <= 0 ? recipientUserId : callerId;
 
-            var wallet1Opt = walletRepo.findByIdForUpdate(first);
-            var wallet2Opt = walletRepo.findByIdForUpdate(second);
+            var wallet1Opt = walletService.lockForUpdate(first);
+            var wallet2Opt = walletService.lockForUpdate(second);
 
             if (wallet1Opt.isEmpty() || wallet2Opt.isEmpty()) {
                 throw new RuntimeException("Wallet not found after get-or-create");
@@ -150,28 +148,19 @@ public class TransferService {
             }
 
             // 7. Mutate balances
-            walletRepo.debit(callerId, request.amountPaise());
-            walletRepo.credit(recipientUserId, request.amountPaise());
+            walletService.debit(callerId, request.amountPaise());
+            walletService.credit(recipientUserId, request.amountPaise());
 
             log.info("transfer.applied from={} to={} amount={} transfer_id={}",
                     callerId, recipientUserId, request.amountPaise(), transferId);
             appliedCounter.increment();
 
             // 8. Read back caller's new balance
-            var updatedCallerWallet = walletRepo.findByIdForUpdate(callerId);
+            var updatedCallerWallet = walletService.lockForUpdate(callerId);
             long newBalance = updatedCallerWallet.map(Wallet::balancePaise).orElse(0L);
 
             return new TransferResponse(transferId, newBalance);
         });
-    }
-
-    public Optional<Wallet> getBalance(String userId) {
-        return walletRepo.findById(userId);
-    }
-
-    public Wallet getOrCreateWallet(String userId) {
-        walletRepo.getOrCreate(userId);
-        return walletRepo.findById(userId).orElseThrow();
     }
 
     public Optional<Transfer> getTransfer(UUID transferId, String callerId) {

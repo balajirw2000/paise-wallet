@@ -1,6 +1,6 @@
 package com.paise.wallet;
 
-import com.paise.wallet.service.TransferService;
+import com.paise.wallet.service.WalletService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -19,7 +19,7 @@ public class AuthTest extends BaseIntegrationTest {
     private MockMvc mockMvc;
 
     @Autowired
-    private TransferService transferService;
+    private WalletService walletService;
 
     @Test
     void missingToken_returns401() throws Exception {
@@ -37,8 +37,8 @@ public class AuthTest extends BaseIntegrationTest {
     @Test
     void nonParticipantTransferRead_returns403() throws Exception {
         // Create wallets and a transfer
-        transferService.getOrCreateWallet("user_read_1");
-        transferService.getOrCreateWallet("user_read_2");
+        walletService.getOrCreate("user_read_1");
+        walletService.getOrCreate("user_read_2");
 
         // Fund user_read_1 using direct insert (since we can't fund via API easily)
         // We'll create a wallet with balance via SQL

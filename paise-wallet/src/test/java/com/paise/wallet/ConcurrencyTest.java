@@ -4,6 +4,7 @@ import com.paise.wallet.domain.InsufficientFundsException;
 import com.paise.wallet.domain.TransferRequest;
 import com.paise.wallet.domain.TransferResponse;
 import com.paise.wallet.service.TransferService;
+import com.paise.wallet.service.WalletService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,6 +21,9 @@ public class ConcurrencyTest extends BaseIntegrationTest {
 
     @Autowired
     private TransferService transferService;
+
+    @Autowired
+    private WalletService walletService;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -40,14 +44,14 @@ public class ConcurrencyTest extends BaseIntegrationTest {
         String userB = "concB_" + UUID.randomUUID().toString().substring(0, 8);
 
         // Pre-create wallets via get-or-create (as POST /accounts would)
-        transferService.getOrCreateWallet(userA);
-        transferService.getOrCreateWallet(userB);
+        walletService.getOrCreate(userA);
+        walletService.getOrCreate(userB);
 
         // Fund userA with enough for all transfers (ensure it can afford each attempted)
         int concurrency = 50;
-        transferService.getOrCreateWallet("rich");
+        walletService.getOrCreate("rich");
         fund(userA, concurrency * 1000L + 1000L); // enough balance
-        transferService.getOrCreateWallet(userB);
+        walletService.getOrCreate(userB);
 
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -94,8 +98,8 @@ public class ConcurrencyTest extends BaseIntegrationTest {
         String userC = "retryC_" + UUID.randomUUID().toString().substring(0, 8);
         String userD = "retryD_" + UUID.randomUUID().toString().substring(0, 8);
 
-        transferService.getOrCreateWallet(userC);
-        transferService.getOrCreateWallet(userD);
+        walletService.getOrCreate(userC);
+        walletService.getOrCreate(userD);
         fund(userC, 1_000_000L); // plenty
 
         String idemKey = "retry_key_" + UUID.randomUUID().toString().substring(0, 8);
@@ -140,8 +144,8 @@ public class ConcurrencyTest extends BaseIntegrationTest {
         String u1 = "never_" + UUID.randomUUID().toString().substring(0, 8);
         String u2 = "never2_" + UUID.randomUUID().toString().substring(0, 8);
 
-        transferService.getOrCreateWallet(u1);
-        transferService.getOrCreateWallet(u2);
+        walletService.getOrCreate(u1);
+        walletService.getOrCreate(u2);
         fund(u1, 10_000L);
 
         String idemKey = "double_" + UUID.randomUUID().toString().substring(0, 8);
@@ -176,8 +180,8 @@ public class ConcurrencyTest extends BaseIntegrationTest {
     void insufficientFunds_concurrent_noOverspend() throws Exception {
         String s = "poor_" + UUID.randomUUID().toString().substring(0, 8);
         String r = "rich_r_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(s);
-        transferService.getOrCreateWallet(r);
+        walletService.getOrCreate(s);
+        walletService.getOrCreate(r);
         fund(s, 100); // only 100 paise
 
         int concurrency = 50;

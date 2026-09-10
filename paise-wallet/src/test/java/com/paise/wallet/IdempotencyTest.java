@@ -5,6 +5,7 @@ import com.paise.wallet.domain.InsufficientFundsException;
 import com.paise.wallet.domain.TransferRequest;
 import com.paise.wallet.domain.TransferResponse;
 import com.paise.wallet.service.TransferService;
+import com.paise.wallet.service.WalletService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,6 +22,9 @@ public class IdempotencyTest extends BaseIntegrationTest {
     private TransferService transferService;
 
     @Autowired
+    private WalletService walletService;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     private void fund(String userId, long amount) {
@@ -31,8 +35,8 @@ public class IdempotencyTest extends BaseIntegrationTest {
     void sameKeySameBody_replaysOriginalResult() {
         String a = "idemA_" + UUID.randomUUID().toString().substring(0, 8);
         String b = "idemB_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
-        transferService.getOrCreateWallet(b);
+        walletService.getOrCreate(a);
+        walletService.getOrCreate(b);
         fund(a, 1000);
 
         TransferRequest req = new TransferRequest(b, 100, "idem-same");
@@ -49,8 +53,8 @@ public class IdempotencyTest extends BaseIntegrationTest {
     void sameKeyDifferentBody_returnsConflict() {
         String a = "idemC_" + UUID.randomUUID().toString().substring(0, 8);
         String b = "idemD_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
-        transferService.getOrCreateWallet(b);
+        walletService.getOrCreate(a);
+        walletService.getOrCreate(b);
         fund(a, 5000);
 
         transferService.transfer(a, new TransferRequest(b, 100, "idem-conflict"));
@@ -62,8 +66,8 @@ public class IdempotencyTest extends BaseIntegrationTest {
     void moneyMovedExactlyOnce() {
         String a = "exactA_" + UUID.randomUUID().toString().substring(0, 8);
         String b = "exactB_" + UUID.randomUUID().toString().substring(0, 8);
-        transferService.getOrCreateWallet(a);
-        transferService.getOrCreateWallet(b);
+        walletService.getOrCreate(a);
+        walletService.getOrCreate(b);
         fund(a, 500);
 
         String key = "exact_key_" + UUID.randomUUID().toString().substring(0, 8);
