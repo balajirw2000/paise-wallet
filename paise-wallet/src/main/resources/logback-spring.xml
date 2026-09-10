@@ -6,6 +6,7 @@
     <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <includeMdcKeyName>request_id</includeMdcKeyName>
+            <includeMdcKeyName>caller_id</includeMdcKeyName>
             <fieldNames>
                 <timestamp>[ignore]</timestamp>
                 <message>message</message>

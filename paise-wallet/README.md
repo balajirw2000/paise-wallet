@@ -247,7 +247,9 @@ Notes that apply to serverless providers (Neon/Supabase):
 
 ## Observability
 
-- **Structured JSON logs** (Logstash encoder) at stdout, including `request_id`.
+- **Structured JSON logs** (Logstash encoder) at stdout, including `request_id` and `caller_id`.
+- **Per-request access log** (`request.completed`): method, path, query, HTTP status, `duration_ms`, caller. Slow requests (≥ 2 s) and 5xx responses are logged at `WARN` with an `ALERT` marker (`request.slow` / `request.error`). Response-time percentiles are also exposed via `http.server.requests` on `/metrics`.
+- **All exceptions are logged**: expected business failures (`INVALID_REQUEST`, `INSUFFICIENT_FUNDS`, `IDEMPOTENCY_CONFLICT`, `FORBIDDEN`, validation) at `WARN`; unexpected errors at `ERROR` with full stack traces; auth failures as `auth.failure`. Each entry carries the same `request_id` as the access log line for end-to-end tracing.
 - `X-Request-Id` is read from the request or generated, placed in MDC, and echoed in the response header.
 - Business events logged: `transfer.applied`, `transfer.rejected`, `insufficient_funds`, `transfer.idempotent_replay`, `transfer.conflict`, `wallet.getorcreate.race_lost`, `auth.failure`.
 - **Metrics** (`/metrics`, Prometheus text): `transfers_applied_total`, `transfers_rejected_total{reason=...}`, HTTP request latency histograms (percentile histogram enabled → p50/p95/p99 derivable), plus all standard Spring/Actuator/JVM metrics.

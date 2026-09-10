@@ -66,6 +66,7 @@ public class JwtFilter extends OncePerRequestFilter {
             String userId = jwtUtil.verifyAndExtractSub(token);
             CallerContext.set(userId);
             MDC.put("caller_id", userId);
+            request.setAttribute("caller_id", userId);
             filterChain.doFilter(request, response);
         } catch (Exception e) {
             log.warn("auth.failure reason={}", e.getMessage());
