@@ -256,6 +256,67 @@ Notes that apply to serverless providers (Neon/Supabase):
 
 Health/readiness: `/healthz` (liveness), `/readyz` (readiness, runs `SELECT 1` against the DB).
 
+## Design decisions
+
+### 1. The get-or-create + transfer race: mechanism, and where idempotency sits
+
+**Simplest correct mechanism.** `user_id` is the `wallets` primary key, and creation is a single
+atomic statement — `INSERT INTO wallets(user_id) VALUES (?) ON CONFLICT (user_id) DO NOTHING`
+(`WalletRepository.getOrCreate`). PostgreSQL serializes the classic two-concurrent-first-inserts at
+the unique index: exactly one transaction gets to insert; the competing tuple waits until the winner
+commits or aborts, then the loser takes the `DO NOTHING` path. No unique-violation ever surfaces to
+the caller, so there is no retry loop and no 500 from losing the race. Heavier alternatives were
+rejected: `SELECT`-then-`INSERT` (the textbook race — one caller 500s), `INSERT` + catch
+`UniqueViolation` + retry (correct but burns extra transactions), per-user in-process mutexes (break
+on a second instance), and advisory locks or an outbox/queue settlement layer (no benefit over a
+primary key here).
+
+The transfer ups the same trick by one level: `transfers` has `UNIQUE (from_user, idempotency_key)`
+(`V1__init.sql`), and the whole transfer is one `READ_COMMITTED` transaction that runs in this order:
+
+1. Resolve the recipient — `to_user` get-or-creates; `to_wallet_id` must already exist (never auto-created).
+2. Get-or-create the caller's wallet (`ON CONFLICT DO NOTHING`).
+3. Lock **both** wallets `SELECT … FOR UPDATE` in deterministic `user_id` lexicographic order — this is the deadlock-free serialization point for balance changes.
+4. Idempotency check: same key + same `request_hash` → replay the stored result; same key + different body → `409`.
+5. `INSERT` the transfer row. The unique index is the **claim**: the first insert wins; a concurrent same-key transaction hits `DuplicateKeyException` and switches to replay-or-conflict (`TransferRepository.insert`).
+6. Debit caller, credit recipient — money moves **only now**, still inside the same transaction.
+7. Read back the caller's new balance.
+
+So the idempotency key sits **before the balance mutation, as the serialization barrier, in the same
+transaction as the mutation** (steps 4–6 are one atomic unit, not separate steps). A given
+`(caller, idempotency_key)` can be claimed by exactly one transaction; every replay after that reads
+the row and never moves money again. Because the claim and the debit/credit commit together, the
+"recorded but never finished" crash window cannot exist, and a retry after a `5xx` is always safe —
+it replays. Under concurrency the first insert wins; losers either return the replay or a `409`.
+
+### 2. Consistency vs. availability (NFR priorities for a money workload)
+
+**Explicit priorities, in order:**
+1. **Correctness / isolation** — never double-spend, no lost update, no overdraft (balance is checked on the locked row, and the schema adds `CHECK (balance_paise >= 0)` as a second safety net).
+2. **Durability + idempotency** — a transfer the client is told about is materialized exactly once.
+3. **Consistency of reads** — `GET /accounts/me` returns committed truth.
+4. **API availability and latency under degradation** — important, but subordinated to the above.
+
+**Transfer path: reject, don't degrade.** When the database is slow (row-lock contention) or down,
+the transaction aborts with *nothing partially applied* and the API returns `5xx`, never a
+better-sounding degraded answer. There is no cached or speculative credit, no async "promise to move
+money later": once a transfer is acknowledged we owe that state to two parties, so the only safe way
+to stay available is to fail fast and loudly and let the client retry with the same
+`idempotency_key` (which replays). A moment of rejection is far cheaper than a double-spend forever.
+Concurrent transfers for the same user serialize on the `FOR UPDATE` row lock — they queue, so the
+system stays correct and degrades gracefully rather than corrupting.
+
+**Read path: live Postgres, no cache.** Balance is a `SELECT` on `wallets`; there is deliberately no
+in-memory cache, because a stale balance in a money app is worse than a slower one — people make
+decisions with it. Under load the bounded Hikari pool (size 20) makes callers queue instead of
+exhausting connections, and `/readyz` reflects DB health via `SELECT 1`. We accept higher read
+latency under saturation rather than a staleness window in the source of truth.
+
+**Why not an AP flavor.** Any acknowledged transfer is a fact two peers rely on; two servers cannot
+both "succeed" against one ledger. Availability is therefore provided by design — fast rejection,
+safe idempotent retries, bounded pools, readiness gating — instead of by serving possibly-wrong
+state. Consistency-first is the only coherent stance for money.
+
 ---
 
 See `WRITEUP.md` for the full engineering rationale: data model, concurrency mechanism and the alternatives that were rejected, idempotency design, authorization flow, the consistency-vs-availability decision, NFR priorities, edge cases, deployment/observability choices, AI usage, and the free-tier cost note.
