@@ -235,7 +235,7 @@
     $("noneHint").style.display = listing.length ? "none" : "block";
     if (!listing.length) { $("accounts").innerHTML = ""; return; }
     $("accounts").innerHTML =
-      '<table><thead><tr><th>User</th><th>Wallet id</th><th>Balance</th><th></th></tr></thead><tbody>' +
+      '<table><thead><tr><th>User</th><th>Wallet id</th><th>Balance</th></tr></thead><tbody>' +
       listing.map(a => {
         const u = a.user_id;
         const isP = !!users[u];
@@ -246,9 +246,7 @@
         '<td class="wid" title="' + wid + '">' + short(wid) +
         ' <button class="btn-mini" onclick="copyWid(\'' + u + '\')">copy</button></td>' +
         '<td class="bal">' + bal.toLocaleString("en-IN") + ' paise<br /><span class="rupees">' + fmtRs(bal) + "</span></td>" +
-        '<td style="white-space:nowrap">' +
-        '<button class="btn-mini" onclick="topUp(\'' + u + '\',100)">+₹100</button>' +
-        "</td></tr>";
+        "</tr>";
       }).join("") + "</tbody></table>";
   }
 
